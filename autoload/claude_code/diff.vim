@@ -118,7 +118,7 @@ function! claude_code#diff#show(orig_file, proposed_file, display_name) abort
   let s:diff_bufs = [l:orig_buf, l:prop_buf]
 
   " Show full file (open all folds)
-  windo setlocal foldenable foldmethod=diff foldlevel=999 foldcolumn=0
+  windo setlocal foldenable foldmethod=diff foldlevel=999 foldcolumn=0 wrap
 
   " Equalize windows and jump to first change
   wincmd =
