@@ -8,5 +8,8 @@ doc/tags
 *.swo
 *~
 
+# Python
+__pycache__/
+
 # macOS
 .DS_Store

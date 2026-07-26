@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """
 vim-close-diff.py — PostToolUse hook for Claude Code
+Vim closes its own preview when a decision is made; this is belt-and-braces:
+tell every Vim to close any leftover preview and sweep stale session files.
 """
 import sys
 import os
+import time
 import subprocess
+
+GLOBAL_DIR = os.path.expanduser("~/.claude/vim-diff")
 
 def main():
     try:
@@ -12,31 +17,24 @@ def main():
     except Exception:
         pass
 
-    cwd = os.getcwd()
-    claude_dir = os.path.join(cwd, ".claude", "tmp")
-    prefix = os.path.join(claude_dir, "claude-vim-diff")
-    close_trigger = f"{prefix}-close"
-
-    os.makedirs(claude_dir, exist_ok=True)
-
-    # Write close trigger
-    with open(close_trigger, "w") as f:
-        f.write("1")
-
-    # Try IPC
     try:
-        servers = subprocess.check_output(["vim", "--serverlist"], stderr=subprocess.DEVNULL).decode('utf-8').strip().split('\n')
-        if servers and servers[0]:
-            subprocess.run(["vim", "--servername", servers[0], "--remote-expr", "claude_code#diff#close()"], stderr=subprocess.DEVNULL)
+        servers = subprocess.check_output(["vim", "--serverlist"],
+                stderr=subprocess.DEVNULL).decode("utf-8").split()
+        for s in servers:
+            subprocess.run(["vim", "--servername", s, "--remote-expr",
+                    "claude_code#diff#close()"], stderr=subprocess.DEVNULL, timeout=5)
     except Exception:
         pass
 
-    # Clean up temp files
-    for ext in ["-original", "-proposed", "-trigger.json"]:
-        try:
-            os.remove(prefix + ext)
-        except OSError:
-            pass
+    # Sweep session files older than an hour (crashed/timed-out sessions)
+    try:
+        cutoff = time.time() - 3600
+        for name in os.listdir(GLOBAL_DIR):
+            p = os.path.join(GLOBAL_DIR, name)
+            if os.path.getmtime(p) < cutoff:
+                os.remove(p)
+    except OSError:
+        pass
 
     sys.exit(0)
 

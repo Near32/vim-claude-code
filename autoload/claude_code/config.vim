@@ -40,6 +40,7 @@ let s:defaults = {
       \ 'terminal_start_delay': 300,
       \ 'scroll_keys':           1,
       \ 'diff_preview':          0,
+      \ 'diff_match_repo_root':  0,
       \ }
 
 " Get a configuration value.

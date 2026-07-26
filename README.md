@@ -210,6 +210,17 @@ This registers Claude Code hooks in `.claude/settings.local.json`. To auto-enabl
 let g:claude_code_diff_preview = 1
 ```
 
+**Multiple repos, one shared trigger directory:** all Vim instances poll the same
+`~/.claude/vim-diff` directory. By default (`g:claude_code_diff_match_repo_root = 0`),
+any idle Vim claims the next trigger regardless of which repo it's for — the right
+choice if you only ever have one Vim open at a time, since it also means a Vim opened
+in one repo will still catch edits to files elsewhere (e.g. dotfiles, a plugin
+you're also iterating on). If you routinely run several Vim sessions across
+different repos at once and want each to only handle its own repo's edits, opt in:
+```vim
+let g:claude_code_diff_match_repo_root = 1
+```
+
 **Diff preview commands:**
 
 | Command | Description |
@@ -324,6 +335,7 @@ let g:claude_code_float_border = 'double'
 | `g:claude_code_model` | `''` | Claude model override |
 | `g:claude_code_debug` | `0` | Enable debug logging to message area |
 | `g:claude_code_diff_preview` | `0` | Auto-start diff preview polling on Vim startup |
+| `g:claude_code_diff_match_repo_root` | `0` | Restrict this Vim to triggers under its own repo/cwd (for running several Vims at once) |
 | `g:claude_code_bracketed_paste` | `1` | Enable bracketed paste mode support |
 | `g:claude_code_terminal_start_delay` | `300` | Delay (ms) before attaching to Claude terminal |
 
