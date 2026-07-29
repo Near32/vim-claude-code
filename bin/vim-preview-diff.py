@@ -23,8 +23,19 @@ def apply_edit(content, old_string, new_string, replace_all=False):
         return content.replace(old_string, new_string)
     return content.replace(old_string, new_string, 1)
 
+def has_clientserver():
+    """Whether this `vim` binary was built with +clientserver at all -- without
+    it, `--serverlist`/`--remote-expr` aren't recognized flags, so an empty
+    server list means nothing about whether a Vim is actually running."""
+    try:
+        out = subprocess.check_output(["vim", "--version"],
+                stderr=subprocess.DEVNULL).decode("utf-8")
+        return "+clientserver" in out
+    except Exception:
+        return False
+
 def running_vim_servers():
-    try: 
+    try:
         return subprocess.check_output(["vim", "--serverlist"],
                 stderr=subprocess.DEVNULL).decode("utf-8").split()
     except Exception:
@@ -50,8 +61,13 @@ def main():
         sys.exit(0)
 
     servers = running_vim_servers()
-    if not servers:
-        sys.exit(0) 
+    if has_clientserver() and not servers:
+        # clientserver works on this vim and genuinely found nothing --
+        # trust it, no Vim is running to pick this up.
+        sys.exit(0)
+    # No clientserver support: `servers` is always [] regardless of whether
+    # a Vim is actually running, so fall through to the trigger-file/polling
+    # path below (pre-dfe7ea6 behaviour) instead of skipping blind.
 
     cwd = data.get("cwd", os.getcwd())
     tool_input = data.get("tool_input", {})
