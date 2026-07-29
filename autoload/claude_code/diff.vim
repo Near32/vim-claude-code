@@ -407,10 +407,15 @@ function! s:prompt_category() abort
     return s:code_category
   endif
   let l:opts = [
-        \ 'S25-correction: typo/spelling/punctuation/citation-format fix (permitted, identify+correct)',
-        \ 'S26-identified-issue: grammar/clarity/tone/sequencing issue flagged; fix is my own wording (S27 selection)',
-        \ 'S30-integrated-check: equivalent to standard spell/grammar check (no acknowledgement needed)',
-        \ 'S28-29-OUT-OF-SCOPE: rewrite/summary/argument/code/figure content — should be REJECTED, not accepted',
+        \ '7.2-correction: word usage / typographical error fix (permitted, identify+correct)',
+        \ '7.3.1-grammar-and-syntax: identified, not corrected; fix is my own wording (7.4 selection)',
+        \ '7.3.2-clarity-of-expression: identified, not corrected; fix is my own wording (7.4 selection)',
+        \ '7.3.3-voice-and-tone: identified, not corrected; fix is my own wording (7.4 selection)',
+        \ '7.3.4-logical-sequencing: identified, not corrected; fix is my own wording (7.4 selection)',
+        \ '7.3.5-ambiguity: identified, not corrected; fix is my own wording (7.4 selection)',
+        \ '7.3.6-repetition: identified, not corrected; fix is my own wording (7.4 selection)',
+        \ '9.1-integrated-check: equivalent to standard spell/grammar check (no acknowledgement needed)',
+        \ '8.1-8.2-OUT-OF-SCOPE (a new version of my content, not a fix to a located defect): rewrite/summary/argument/code/figure content — should be REJECTED, not accepted',
         \ 'other: free-form entry',
         \ ]
   let l:header = 'claude-code: classify this change (Transparency of Authorship policy):'
@@ -426,12 +431,13 @@ function! s:prompt_category() abort
     let l:free = input('category (free-form): ')
     return empty(l:free) ? '' : l:free
   endif
+  let l:picked = l:opts[l:choice - 1]
   " Accepting out-of-scope assistance is a policy breach — warn, allow override with a reason
-  if l:choice == 4
-    let l:why = input('S28-29 assistance must normally be rejected. Reason for accepting anyway (empty = cancel): ')
-    return empty(l:why) ? '' : matchstr(l:opts[3], '^\S*') . ' OVERRIDE: ' . l:why
+  if l:picked =~# '^8\.1-8\.2-OUT-OF-SCOPE'
+    let l:why = input('8.1-8.2 assistance must normally be rejected. Reason for accepting anyway (empty = cancel): ')
+    return empty(l:why) ? '' : matchstr(l:picked, '^\S*') . ' OVERRIDE: ' . l:why
   endif
-  return l:opts[l:choice - 1]
+  return l:picked
 endfunction
 
  

@@ -92,18 +92,18 @@ def main():
     with open(prop_file, "w", encoding="utf-8") as f:
         f.write(proposed)
 
-    # Heuristic category suggestion for the provenance prompt (Appendix 10)
+    # Heuristic category suggestion for the provenance prompt (PTAPP §7.2-7.4/8)
     def suggest_category(tool, orig, prop):
         import re
         words = lambda s: re.findall(r"[a-zA-Z]+", s.lower())
         if tool == "Write" or abs(len(prop) - len(orig)) > 400:
-            return "4 (S28-29 OUT-OF-SCOPE?) — large/new content, likely reject"
+            return "8.1-8.2-OUT-OF-SCOPE? — large/new content, likely reject"
         old_w, new_w = words(orig), words(prop)
         if sorted(old_w) == sorted(new_w):
-            return "1 (S25-correction) — punctuation/format only, words unchanged"
+            return "7.2-correction — punctuation/format only, words unchanged"
         if len(set(old_w) ^ set(new_w)) <= 3:
-            return "1 (S25-correction) — small word-level fix"
-        return "2 (S26-identified-issue) — wording changed, ensure fix is your own"
+            return "7.2-correction — small word-level fix"
+        return "7.3.X-identified-issue — wording changed, ensure fix is your own (pick the specific 7.3.X)"
 
     display_name = file_path[len(cwd)+1:] if file_path.startswith(cwd) else file_path
     with open(trigger_file, "w", encoding="utf-8") as f:
