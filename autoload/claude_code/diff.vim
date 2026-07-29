@@ -167,9 +167,15 @@ function! claude_code#diff#show(orig_file, proposed_file, display_name, ...) abo
   let s:diff_bufs = [l:orig_buf, l:prop_buf]
 
   " Preserve 'wrap' inside diff mode — Vim forces 'nowrap' on diff windows
-  " unless 'diffopt' contains "followwrap".
+  " unless 'diffopt' contains "followwrap". Older Vim builds (e.g. Debian's
+  " patched 8.1) don't support this diffopt value at all and raise E474;
+  " guard with try/catch so the diff view still opens (just without
+  " 'wrap' preserved) instead of aborting the whole command.
   if &diffopt !~# 'followwrap'
-    set diffopt+=followwrap
+    try
+      set diffopt+=followwrap
+    catch /E474/
+    endtry
   endif
 
   " Show full file (open all folds) and soft-wrap long lines at word breaks
