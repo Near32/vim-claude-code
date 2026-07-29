@@ -194,10 +194,10 @@ function! claude_code#diff#show(orig_file, proposed_file, display_name, ...) abo
     endif
   endfor
 
-  if get(g:, 'claude_code_allow_plain_accept', 0)
-    echomsg 'claude-code: diff preview for ' . a:display_name . ' — ga accept | gm apply edits | gr reject | q close'
-  else
+  if s:is_thesis_scope() && !get(g:, 'claude_code_allow_plain_accept', 0)
     echomsg 'claude-code: diff preview for ' . a:display_name . ' — edit PROPOSED then gm to apply | gr reject | q close (plain accept disabled)'
+  else
+    echomsg 'claude-code: diff preview for ' . a:display_name . ' — ga accept | gm apply edits | gr reject | q close'
   endif
 endfunction
 
@@ -254,7 +254,7 @@ endfunction
 " ---------------------------------------------------------------------------
 
 function! claude_code#diff#accept() abort
-  if !get(g:, 'claude_code_allow_plain_accept', 0)
+  if s:is_thesis_scope() && !get(g:, 'claude_code_allow_plain_accept', 0)
     echohl WarningMsg
     echo 'claude-code: plain accept disabled (Transparency of Authorship policy) — edit PROPOSED then gm, or gr to reject. Enable with :let g:claude_code_allow_plain_accept=1'
     echohl None
@@ -297,7 +297,8 @@ function! claude_code#diff#apply_edited() abort
 
   " Unedited proposal cannot be applied via gm unless plain accept is enabled:
   " the policy requires the PGR's own judgement to be visible in the change
-  if !get(g:, 'claude_code_allow_plain_accept', 0)
+  " (thesis prose only — not PTAPP-governed code/tooling)
+  if s:is_thesis_scope() && !get(g:, 'claude_code_allow_plain_accept', 0)
         \ && l:lines ==# readfile(s:proposed_file)
     echohl WarningMsg
     echo 'claude-code: PROPOSED is unedited — rephrase it in your own words (critical oversight), or gr to reject'
@@ -389,9 +390,22 @@ function! s:unified_diff(from_file, to_lines, label_a, label_b) abort
   return l:out
 endfunction
 
+" Thesis-submitted prose (PTAPP-governed) vs everything else (tooling/code,
+" outside PTAPP scope per §2 — see AI_POLICY/README.md §3.4 ).
+function! s:is_thesis_scope() abort
+  return tolower(fnamemodify(s:target_display, ':e')) =~# '^\%(tex\|bib\)$'
+endfunction
+
+" Not PTAPP-governed (tooling/code, §2) — no forced classification, the
+" accepted/modified/rejected decision already recorded is enough.
+let s:code_category = 'code-tooling (not PTAPP-governed)' 
+
 " Forced classification at accept time, grounded in Appendix 10.
 " Returns the chosen category string, or '' if the user cancelled.
 function! s:prompt_category() abort
+  if !s:is_thesis_scope()
+    return s:code_category
+  endif
   let l:opts = [
         \ 'S25-correction: typo/spelling/punctuation/citation-format fix (permitted, identify+correct)',
         \ 'S26-identified-issue: grammar/clarity/tone/sequencing issue flagged; fix is my own wording (S27 selection)',
@@ -419,6 +433,8 @@ function! s:prompt_category() abort
   endif
   return l:opts[l:choice - 1]
 endfunction
+
+ 
 
 function! s:record_provenance(decision, accepted_lines, category) abort
   try

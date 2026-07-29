@@ -23,16 +23,21 @@ def apply_edit(content, old_string, new_string, replace_all=False):
         return content.replace(old_string, new_string)
     return content.replace(old_string, new_string, 1)
 
-def notify_all_vims():
-    try:
-        servers = subprocess.check_output(["vim", "--serverlist"],
+def running_vim_servers():
+    try: 
+        return subprocess.check_output(["vim", "--serverlist"],
                 stderr=subprocess.DEVNULL).decode("utf-8").split()
-        for s in servers:
+    except Exception:
+        return []
+
+def notify_all_vims(servers):
+    for s in servers:
+        try:
             subprocess.run(["vim", "--servername", s, "--remote-expr",
                     "claude_code#diff#handle_trigger()"],
                     stderr=subprocess.DEVNULL, timeout=5)
-    except Exception:
-        pass
+        except Exception:
+            pass
 
 def main():
     try:
@@ -43,6 +48,10 @@ def main():
     tool_name = data.get("tool_name")
     if tool_name not in ("Edit", "Write", "MultiEdit"):
         sys.exit(0)
+
+    servers = running_vim_servers()
+    if not servers:
+        sys.exit(0) 
 
     cwd = data.get("cwd", os.getcwd())
     tool_input = data.get("tool_input", {})
@@ -109,7 +118,7 @@ def main():
             "suggested_category": suggest_category(tool_name, content, proposed),
         }, f)
 
-    notify_all_vims()
+    notify_all_vims(servers)
 
     # Block until a Vim writes the decision, then answer the permission
     # request directly — no keystroke injection, works from any terminal.
