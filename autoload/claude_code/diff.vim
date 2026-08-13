@@ -22,9 +22,13 @@ let s:target_display = ''
 let s:proposed_file = ''
 let s:orig_file = ''
 let s:transcript = ''
+let s:transcript_start = 0
 let s:suggested_category = ''
 let s:decision_file = ''
 let s:decided = 0
+" Tutor mode: the hook already answered 'deny' and Claude moved on, so Vim owns
+" the write and reports back by typing into the terminal, not via a decision file.
+let s:no_wait = 0
 let s:plugin_root = fnamemodify(resolve(expand('<sfile>:p')), ':h:h:h')
 if has('win32')
   let s:plugin_root = substitute(s:plugin_root, '\\', '/', 'g')
@@ -68,9 +72,32 @@ function! s:check_trigger(timer_id) abort
     let l:base = empty(l:git_root) ? getcwd() : l:git_root
   endif
   for l:trigger in glob(s:trigger_dir . '/*-trigger.json', 1, 1)
+    " Parsing and showing are caught separately: one 'try' around both meant
+    " any failure inside show() was reported as a parse error, with the trigger
+    " already deleted and no retry — which made a broken preview undiagnosable.
+    " Deliberately NOT deleting an unparseable trigger: the hook writes the
+    " JSON non-atomically, so a half-written file parses as garbage for an
+    " instant. Skipping self-heals on the next tick; deleting would turn that
+    " race into a permanently lost patch.
     try
       let l:data = json_decode(join(readfile(l:trigger), "\n"))
+    catch
+      call claude_code#util#error('claude-code: failed to parse diff trigger — ' . v:exception)
+      continue
+    endtry
+    try
       if l:match_root && stridx(l:data.file_path, l:base . '/') != 0
+        continue
+      endif
+      " Claude runs inside a Vim terminal, and the hook recorded which Vim —
+      " so leave other Vims' patches alone. Every Vim with the plugin loaded
+      " polls this same user-global dir, and before this check whichever timer
+      " fired first won: a long-idle Vim could silently swallow a patch meant
+      " for the active session. 0/absent means Claude is not running under Vim,
+      " so any Vim may take it (previous behaviour).
+      " MUST 'continue' without deleting — the owning Vim still has to find it.
+      let l:owner = get(l:data, 'vim_pid', 0)
+      if l:owner > 0 && l:owner != getpid()
         continue
       endif
       " ponytail: delete-on-claim is the lock; two Vims in one repo can race
@@ -85,10 +112,17 @@ function! s:check_trigger(timer_id) abort
         call claude_code#diff#show(l:data.orig, l:data.proposed, l:data.display_name,
               \ get(l:data, 'file_path', ''), get(l:data, 'decision_file', ''),
               \ get(l:data, 'transcript', ''), get(l:data, 'suggested_category', ''))
+        " Set after show(), whose internal close() must still resolve the
+        " PREVIOUS trigger under the previous trigger's mode.
+        let s:no_wait = get(l:data, 'no_wait', 0)
       endif
       return
     catch
-      call claude_code#util#error('claude-code: failed to parse diff trigger — ' . v:exception)
+      " The trigger was already claimed (deleted) above, so nothing retries —
+      " this message is the only remaining evidence the patch existed. Caught
+      " rather than allowed to propagate, because this runs from a timer.
+      call claude_code#util#error('claude-code: failed to open diff preview for '
+            \ . get(l:data, 'display_name', '(unknown)') . ' — ' . v:exception)
     endtry
   endfor
 endfunction
@@ -96,6 +130,14 @@ endfunction
 " Write the decision the blocked PreToolUse hook is waiting on
 function! s:send_decision(decision, reason) abort
   let s:decided = 1
+  " Tutor mode: nothing is blocked on a decision file — type the outcome into
+  " the Claude terminal instead. 'ask' means dismissed with q: stay silent.
+  if s:no_wait
+    if a:decision !=# 'ask'
+      call claude_code#terminal_bridge#send('[vim-claude-code] ' . a:reason)
+    endif
+    return
+  endif
   if !empty(s:decision_file)
     call writefile([json_encode({'decision': a:decision, 'reason': a:reason})],
           \ s:decision_file)
@@ -112,6 +154,26 @@ endfunction
 " Diff display
 " ---------------------------------------------------------------------------
 
+" Index in the transcript of the MOST RECENT genuine user prompt — scanned
+" backwards from the end, so it lands on the request that triggered this patch,
+" not the first prompt of the session. Tool results are also recorded with
+" type "user", so those are skipped. Falls back to a 40-line tail if no prompt
+" is identifiable.
+function! claude_code#diff#prompt_start(transcript) abort
+  if empty(a:transcript) || !filereadable(a:transcript)
+    return 0
+  endif
+  let l:all = readfile(a:transcript)
+  let l:i = len(l:all) - 1
+  while l:i >= 0
+    if l:all[l:i] =~# '"type"\s*:\s*"user"' && l:all[l:i] !~# 'tool_result\|tool_use_id'
+      return l:i
+    endif
+    let l:i -= 1
+  endwhile
+  return max([0, len(l:all) - 40])
+endfunction
+
 function! claude_code#diff#show(orig_file, proposed_file, display_name, ...) abort
   " Close any existing (previous, stale) diff first — must happen before
   " this trigger's own decision-file bookkeeping is set below, or this
@@ -125,6 +187,10 @@ function! claude_code#diff#show(orig_file, proposed_file, display_name, ...) abo
   " after the stale-diff cleanup above.
   let s:decision_file = a:0 >= 2 ? a:2 : ''
   let s:transcript = a:0 >= 3 ? a:3 : ''
+  " Where this patch's discussion begins: the user prompt that set Claude off.
+  " Everything from there to accept-time is the full exchange — the request,
+  " Claude's work, and (tutor mode) the Q&A while the patch sits open.
+  let s:transcript_start = claude_code#diff#prompt_start(s:transcript)
   let s:suggested_category = a:0 >= 4 ? a:4 : ''
   let s:decided = 0
   " Repo-relative name, used for the '@' attachment reference back to Claude
@@ -250,6 +316,22 @@ function! claude_code#diff#close() abort
     endtry
   endfor
 
+  " Tutor mode: the hook exited long ago, so Vim is the last reader of its
+  " temp files and nothing else will remove them. (In blocking mode the hook
+  " still cleans up after its wait loop — vim-preview-diff.py:204.) Safe here
+  " because every reader has already run: accept()/apply_edited() call
+  " record_provenance() and build_patch() before they call close().
+  if s:no_wait
+    for l:f in [s:orig_file, s:proposed_file]
+      if !empty(l:f)
+        call delete(l:f)
+      endif
+    endfor
+  endif
+  " Cleared unconditionally so a second close() cannot act on stale paths
+  let s:orig_file = ''
+  let s:proposed_file = ''
+
   let s:diff_tab = -1
   let s:diff_bufs = []
   return ''
@@ -272,7 +354,20 @@ function! claude_code#diff#accept() abort
     return
   endif
   call s:record_provenance('accepted', readfile(s:proposed_file), l:cat)
-  call s:send_decision('allow', 'User reviewed and accepted the change in the Vim diff preview.')
+  if s:no_wait
+    " Claude's write was already denied by the hook, so apply it ourselves
+    if empty(s:target_file)
+      call claude_code#util#error('claude-code: no target file recorded — cannot accept')
+      return
+    endif
+    call claude_code#diff#mkdir_for(s:target_file)
+    call writefile(readfile(s:proposed_file), s:target_file)
+    silent! checktime
+    call s:send_decision('allow', 'User accepted your patch to ' . s:target_display
+          \ . ' unmodified; Vim has written it to disk. Re-read the file if you need it.')
+  else
+    call s:send_decision('allow', 'User reviewed and accepted the change in the Vim diff preview.')
+  endif
   call claude_code#diff#close()
 endfunction
 
@@ -280,6 +375,16 @@ function! claude_code#diff#reject() abort
   call s:record_provenance('rejected', [], 'n/a (rejected)')
   call s:send_decision('deny', 'User reviewed and rejected the change in the Vim diff preview. Do not re-apply it; await further instructions.')
   call claude_code#diff#close()
+endfunction
+
+" Create the target's parent directory if it does not exist yet. Claude's own
+" Write creates parents; when Vim performs the write instead (tutor mode, or
+" 'gm' in preview mode) nothing else does, and writefile() fails with E482.
+function! claude_code#diff#mkdir_for(path) abort
+  let l:dir = fnamemodify(a:path, ':h')
+  if !empty(l:dir) && !isdirectory(l:dir)
+    call mkdir(l:dir, 'p')
+  endif
 endfunction
 
 " ---------------------------------------------------------------------------
@@ -323,6 +428,7 @@ function! claude_code#diff#apply_edited() abort
 
   " Write our edited version directly to the real file
   try
+    call claude_code#diff#mkdir_for(l:target)
     call writefile(l:lines, l:target)
   catch
     call claude_code#util#error('claude-code: failed to write ' . l:target . ' — ' . v:exception)
@@ -409,6 +515,11 @@ let s:code_category = 'code-tooling (not PTAPP-governed)'
 " Forced classification at accept time, grounded in Appendix 10.
 " Returns the chosen category string, or '' if the user cancelled.
 function! s:prompt_category() abort
+  " Tutor mode is its own context: the patch is a teaching artefact (concepts,
+  " exercises, feedback, scaffolding), not authored content or a prose fix.
+  if s:no_wait
+    return 'tutoring (AI-assisted learning exchange, not authored content)'
+  endif
   if !s:is_thesis_scope()
     return s:code_category
   endif
@@ -469,7 +580,10 @@ function! s:record_provenance(decision, accepted_lines, category) abort
     " Discussion excerpt: tail of the Claude Code transcript (JSONL)
     if !empty(s:transcript) && filereadable(s:transcript)
       let l:all = readfile(s:transcript)
-      call writefile(l:all[max([0, len(l:all) - 40]):], l:dir . '/discussion.jsonl')
+      " From the user prompt that triggered this patch, through to now —
+      " whole, however long it ran. In tutor mode the patch stays open while
+      " you and Claude talk, and that entire exchange belongs in the record.
+      call writefile(l:all[s:transcript_start :], l:dir . '/discussion.jsonl')
     endif
 
     call writefile([
@@ -510,7 +624,10 @@ function! s:bin_dir() abort
   return s:plugin_root . '/bin'
 endfunction
 
-function! claude_code#diff#install_hooks() abort
+" a:1 (optional): 1 = tutor mode — hook returns immediately instead of blocking
+" on Vim's decision, and the tutor skill is linked into the project.
+function! claude_code#diff#install_hooks(...) abort
+  let l:tutor = a:0 && a:1
   let l:bin = s:bin_dir()
   let l:preview_script = l:bin . '/vim-preview-diff.py'
   let l:close_script = l:bin . '/vim-close-diff.py'
@@ -556,15 +673,20 @@ function! claude_code#diff#install_hooks() abort
     let l:data.hooks.PostToolUse = []
   endif
 
-  " Remove any existing vim-claude-code diff entries (avoid duplicates)
-  let l:marker = 'vim-preview-diff'
+  " Remove any existing vim-claude-code diff entries (avoid duplicates).
+  " Matches BOTH scripts: the PostToolUse command is vim-close-diff.py, which
+  " the old 'vim-preview-diff' marker never matched — so every install appended
+  " another Post entry and removed none.
+  let l:marker = '-diff.py'
   call s:remove_hook_entries(l:data.hooks.PreToolUse, l:marker)
   call s:remove_hook_entries(l:data.hooks.PostToolUse, l:marker)
 
   " Add our entries
   call add(l:data.hooks.PreToolUse, {
         \ 'matcher': 'Edit|Write|MultiEdit',
-        \ 'hooks': [{'type': 'command', 'command': l:preview_script, 'timeout': 600}],
+        \ 'hooks': [{'type': 'command',
+        \            'command': l:preview_script . (l:tutor ? ' --no-wait' : ''),
+        \            'timeout': 600}],
         \ })
   call add(l:data.hooks.PostToolUse, {
         \ 'matcher': 'Edit|Write|MultiEdit',
@@ -575,10 +697,19 @@ function! claude_code#diff#install_hooks() abort
   call mkdir(l:settings_dir, 'p')
   call writefile([json_encode(l:data)], l:settings_path)
 
+  " Tutor mode also needs the skill visible to Claude in this project
+  if l:tutor
+    call mkdir(l:settings_dir . '/skills', 'p')
+    call delete(l:settings_dir . '/skills/tutor', 'rf')
+    call system('ln -sfn ' . shellescape(s:plugin_root . '/skills/tutor')
+          \ . ' ' . shellescape(l:settings_dir . '/skills/tutor'))
+  endif
+
   " Start polling
   call claude_code#diff#start_polling()
 
-  echomsg 'claude-code: diff preview hooks installed -> ' . l:settings_path
+  echomsg 'claude-code: ' . (l:tutor ? 'tutor' : 'diff preview')
+        \ . ' hooks installed -> ' . l:settings_path
 endfunction
 
 function! claude_code#diff#uninstall_hooks() abort
@@ -608,7 +739,9 @@ function! claude_code#diff#uninstall_hooks() abort
     return
   endif
 
-  let l:marker = 'vim-preview-diff'
+  " Matches both scripts — see install_hooks(); uninstall previously left every
+  " PostToolUse entry behind.
+  let l:marker = '-diff.py'
   if has_key(l:data.hooks, 'PreToolUse')
     call s:remove_hook_entries(l:data.hooks.PreToolUse, l:marker)
   endif

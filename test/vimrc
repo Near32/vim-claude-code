@@ -28,6 +28,7 @@ let s:autoload_modules = [
       \ 'util', 'config', 'git', 'terminal',
       \ 'meta_commands', 'git_commands', 'workflow_commands',
       \ 'arch_commands', 'commands', 'keymaps', 'refresh', 'window',
+      \ 'diff',
       \ ]
 
 for s:mod in s:autoload_modules

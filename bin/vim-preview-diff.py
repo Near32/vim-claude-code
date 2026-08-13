@@ -50,12 +50,64 @@ def notify_all_vims(servers):
         except Exception:
             pass
 
+def vim_ancestor_pid():
+    """PID of the Vim hosting this Claude session, or None.
+
+    Claude Code runs inside Vim's terminal, so that Vim is an ancestor of this
+    hook process. Recording it lets the trigger be claimed by the Vim it
+    actually belongs to, instead of whichever Vim's poll timer fires first —
+    every Vim with the plugin loaded watches the same user-global directory.
+
+    Uses `ps` rather than /proc so it works on macOS as well as Linux. Returns
+    None when Claude runs outside Vim, which restores the previous
+    first-come-first-served behaviour.
+    """
+    pid = os.getpid()
+    for _ in range(12):  # ponytail: bounded walk, no cycle detection needed
+        try:
+            out = subprocess.check_output(["ps", "-o", "ppid=", "-p", str(pid)],
+                    stderr=subprocess.DEVNULL).decode().strip()
+            if not out or out == "0":
+                return None
+            pid = int(out)
+            comm = subprocess.check_output(["ps", "-o", "comm=", "-p", str(pid)],
+                    stderr=subprocess.DEVNULL).decode().strip()
+        except Exception:
+            return None
+        if os.path.basename(comm) in ("vim", "gvim", "mvim", "vim.basic", "vim.gtk3"):
+            return pid
+    return None
+
+def sweep_stale(max_age=3600):
+    """Remove leftovers older than an hour.
+
+    vim-close-diff.py does this too, but it is a PostToolUse hook and tutor
+    mode answers 'deny', so the tool never runs and that hook never fires.
+    Age-based is the only option for the user-edits-*.diff files: their path is
+    handed to Claude, which reads them after Vim has closed the diff, so no
+    close-time cleanup can own them.
+    """
+    try:
+        cutoff = time.time() - max_age
+        for name in os.listdir(GLOBAL_DIR):
+            p = os.path.join(GLOBAL_DIR, name)
+            try:
+                if os.path.getmtime(p) < cutoff:
+                    os.remove(p)
+            except OSError:
+                pass
+    except OSError:
+        pass
+
 def main():
     try:
         data = json.loads(sys.stdin.read())
     except Exception:
         sys.exit(0)
 
+    sweep_stale()
+
+    no_wait = "--no-wait" in sys.argv
     tool_name = data.get("tool_name")
     if tool_name not in ("Edit", "Write", "MultiEdit"):
         sys.exit(0)
@@ -132,9 +184,30 @@ def main():
             "decision_file": decision_file,
             "transcript": data.get("transcript_path", ""),
             "suggested_category": suggest_category(tool_name, content, proposed),
+            "no_wait": no_wait,
+            # The Vim that hosts this Claude session, so only that Vim claims
+            # this trigger. Absent/0 when Claude runs outside Vim.
+            "vim_pid": vim_ancestor_pid() or 0,
         }, f)
 
     notify_all_vims(servers)
+
+    # Tutor mode (--no-wait): don't block. Deny immediately and hand the write
+    # to Vim, which applies the (edited) patch itself and messages the terminal
+    # back. Claude's turn ends, so the user keeps the terminal for questions
+    # while they edit the patch.
+    if no_wait:
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": (
+                "Tutor mode: your patch for " + display_name + " is open in the user's "
+                "Vim for review and editing. Do NOT retry this edit or write the file "
+                "another way. Tell the user the patch is open, then stop and wait — they "
+                "may ask you questions meanwhile, and Vim will report back what they "
+                "applied."),
+        }}))
+        return
 
     # Block until a Vim writes the decision, then answer the permission
     # request directly — no keystroke injection, works from any terminal.

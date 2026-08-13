@@ -30,8 +30,11 @@ jobs:
       - name: Run Vader tests
         run: |
           vim -u test/vimrc \
-              -c 'Vader! test/test_dispatch.vader' \
+              -c 'Vader! test/test_dispatch.vader test/test_tutor.vader' \
               -c 'qall!' \
               --not-a-term -e
         env:
           VADER_PATH: /tmp/vader
+
+      - name: Run hook tests
+        run: python3 test/test_hook.py

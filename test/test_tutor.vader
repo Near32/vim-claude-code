@@ -1,0 +1,159 @@
+" test/test_tutor.vader — tutor mode (non-blocking review + provenance anchor)
+" Run: vim -u test/vimrc -c 'Vader! test/test_tutor.vader' -c 'qall!'
+"
+" NOTE: Vader Execute blocks run in command-line context — no l: variables.
+
+" ---------------------------------------------------------------------------
+" prompt_start: anchors the provenance discussion excerpt
+" ---------------------------------------------------------------------------
+
+Execute (prompt_start function exists):
+  Assert exists('*claude_code#diff#prompt_start'), 'claude_code#diff#prompt_start not found'
+
+Execute (prompt_start returns 0 for a missing or empty transcript):
+  AssertEqual 0, claude_code#diff#prompt_start('')
+  AssertEqual 0, claude_code#diff#prompt_start('/nonexistent/transcript.jsonl')
+
+Execute (prompt_start anchors on the MOST RECENT user prompt, not the first):
+  let g:t = tempname()
+  call writefile([
+        \ '{"type":"user","message":{"content":"first prompt"}}',
+        \ '{"type":"assistant","message":{"content":"answer"}}',
+        \ '{"type":"user","message":{"content":"second prompt"}}',
+        \ '{"type":"assistant","message":{"content":"answer"}}',
+        \ ], g:t)
+  AssertEqual 2, claude_code#diff#prompt_start(g:t)
+  call delete(g:t)
+
+Execute (prompt_start skips tool results, which also carry type "user"):
+  let g:t = tempname()
+  call writefile([
+        \ '{"type":"user","message":{"content":"the real prompt"}}',
+        \ '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"x"}]}}',
+        \ '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"x"}]}}',
+        \ ], g:t)
+  AssertEqual 0, claude_code#diff#prompt_start(g:t)
+  call delete(g:t)
+
+Execute (prompt_start falls back to a 40-line tail when no prompt is found):
+  let g:t = tempname()
+  call writefile(map(range(100), '"{\"type\":\"assistant\",\"n\":" . v:val . "}"'), g:t)
+  AssertEqual 60, claude_code#diff#prompt_start(g:t)
+  call delete(g:t)
+
+Execute (prompt_start fallback does not go negative on a short transcript):
+  let g:t = tempname()
+  call writefile(['{"type":"assistant"}'], g:t)
+  AssertEqual 0, claude_code#diff#prompt_start(g:t)
+  call delete(g:t)
+
+" ---------------------------------------------------------------------------
+" Hook installation: tutor mode passes --no-wait, preview mode does not
+" ---------------------------------------------------------------------------
+
+Execute (install_hooks accepts the optional tutor flag):
+  Assert exists('*claude_code#diff#install_hooks'), 'install_hooks not found'
+
+Execute (tutor install writes a --no-wait hook and links the skill):
+  let g:dir = tempname()
+  call mkdir(g:dir, 'p')
+  let g:cwd = getcwd()
+  execute 'cd ' . fnameescape(g:dir)
+  call claude_code#diff#install_hooks(1)
+  let g:cfg = json_decode(join(readfile(g:dir . '/.claude/settings.local.json'), "\n"))
+  let g:cmd = g:cfg.hooks.PreToolUse[0].hooks[0].command
+  Assert g:cmd =~# 'vim-preview-diff\.py --no-wait$', 'expected --no-wait, got: ' . g:cmd
+  Assert isdirectory(g:dir . '/.claude/skills/tutor'), 'tutor skill not linked'
+  Assert filereadable(g:dir . '/.claude/skills/tutor/SKILL.md'), 'SKILL.md not reachable'
+
+Execute (preview install writes the same hook WITHOUT --no-wait):
+  call claude_code#diff#install_hooks()
+  let g:cfg = json_decode(join(readfile(g:dir . '/.claude/settings.local.json'), "\n"))
+  let g:cmd = g:cfg.hooks.PreToolUse[0].hooks[0].command
+  Assert g:cmd !~# '--no-wait', 'preview mode must block: ' . g:cmd
+
+" ---------------------------------------------------------------------------
+" mkdir_for: Vim creates parent directories when it performs the write itself
+" ---------------------------------------------------------------------------
+
+Execute (mkdir_for creates missing parent directories):
+  " Regression: gm failed with E482 for any patch whose target lived in a
+  " directory that did not exist yet. Claude's own Write creates parents; when
+  " Vim performs the write (tutor mode, or gm in preview mode) nothing did.
+  let g:base = tempname()
+  let g:target = g:base . '/deep/nested/dir/notes.md'
+  Assert !isdirectory(g:base . '/deep'), 'precondition: parent must not exist'
+  call claude_code#diff#mkdir_for(g:target)
+  Assert isdirectory(g:base . '/deep/nested/dir'), 'parents were not created'
+  " The point of creating them: writefile() must now succeed
+  call writefile(['written'], g:target)
+  AssertEqual ['written'], readfile(g:target)
+  call delete(g:base, 'rf')
+
+Execute (mkdir_for is a no-op when the directory already exists):
+  let g:base = tempname()
+  call mkdir(g:base, 'p')
+  call claude_code#diff#mkdir_for(g:base . '/file.md')
+  Assert isdirectory(g:base), 'existing directory should survive untouched'
+  call delete(g:base, 'rf')
+
+Execute (mkdir_for tolerates a bare filename with no directory part):
+  " fnamemodify('x.md', ':h') returns '.', which exists — must not throw
+  call claude_code#diff#mkdir_for('x.md')
+
+" ---------------------------------------------------------------------------
+" Trigger routing: only the Vim hosting the Claude session claims a patch
+" ---------------------------------------------------------------------------
+
+Execute (a trigger owned by another Vim is left on disk, not claimed):
+  call claude_code#diff#start_polling()
+  " NOT g:dir — that name is the throwaway install dir owned by the hook
+  " installation blocks below, which end by recursively deleting it.
+  let g:tdir = expand('~/.claude/vim-diff')
+  let g:trig = g:tdir . '/vadertest-trigger.json'
+  let g:o = tempname()
+  let g:p = tempname()
+  call writefile(['before'], g:o)
+  call writefile(['after'], g:p)
+  " vim_pid belongs to some other Vim
+  call writefile([json_encode({'orig': g:o, 'proposed': g:p,
+        \ 'display_name': 'x.md', 'file_path': '/tmp/x.md',
+        \ 'vim_pid': getpid() + 1})], g:trig)
+  call claude_code#diff#handle_trigger()
+  " MUST still be there — deleting it would lose the patch entirely
+  Assert filereadable(g:trig), 'foreign trigger was consumed by the wrong Vim'
+  Assert !claude_code#diff#is_open(), 'foreign trigger should not open a diff'
+  call delete(g:trig)
+
+Execute (a trigger owned by THIS Vim is claimed and opens the diff):
+  call writefile([json_encode({'orig': g:o, 'proposed': g:p,
+        \ 'display_name': 'x.md', 'file_path': '/tmp/x.md',
+        \ 'vim_pid': getpid()})], g:trig)
+  call claude_code#diff#handle_trigger()
+  Assert !filereadable(g:trig), 'own trigger should have been claimed'
+  Assert claude_code#diff#is_open(), 'own trigger should open the diff'
+  call claude_code#diff#close()
+
+Execute (a trigger with no vim_pid is claimed by any Vim — detached Claude):
+  call writefile([json_encode({'orig': g:o, 'proposed': g:p,
+        \ 'display_name': 'x.md', 'file_path': '/tmp/x.md'})], g:trig)
+  call claude_code#diff#handle_trigger()
+  Assert !filereadable(g:trig), 'unowned trigger should still be claimed'
+  call claude_code#diff#close()
+  call delete(g:o)
+  call delete(g:p)
+  call claude_code#diff#stop_polling()
+
+Execute (installing one mode replaces the other rather than stacking):
+  " Two installs have run above (tutor, then preview). PostToolUse is asserted
+  " too: its command is vim-close-diff.py, which the old marker never matched,
+  " so entries piled up on every install and survived uninstall entirely.
+  let g:cfg = json_decode(join(readfile(g:dir . '/.claude/settings.local.json'), "\n"))
+  AssertEqual 1, len(g:cfg.hooks.PreToolUse)
+  AssertEqual 1, len(g:cfg.hooks.PostToolUse)
+  call claude_code#diff#uninstall_hooks()
+  let g:cfg = json_decode(join(readfile(g:dir . '/.claude/settings.local.json'), "\n"))
+  AssertEqual 0, len(g:cfg.hooks.PreToolUse)
+  AssertEqual 0, len(g:cfg.hooks.PostToolUse)
+  execute 'cd ' . fnameescape(g:cwd)
+  call delete(g:dir, 'rf')

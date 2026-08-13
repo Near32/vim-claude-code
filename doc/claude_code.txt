@@ -18,7 +18,7 @@ CONTENTS                                                 *claude-code-contents*
       5.4  Architecture & Planning ........ |claude-code-arch-cmds|
       5.5  Workflow Commands .............. |claude-code-workflow-cmds|
       5.6  Meta Commands .................. |claude-code-meta-cmds|
-      5.7  Diff Preview Commands .......... |claude-code-preview-cmds|
+      5.7  Diff Preview & Tutor Commands .. |claude-code-preview-cmds|
       5.8  Utility Commands ............... |claude-code-utility-cmds|
   6.  Keymaps ............................. |claude-code-keymaps|
   7.  Window Modes ........................ |claude-code-windows|
@@ -273,6 +273,48 @@ file is used.
         let g:claude_code_diff_preview = 1
 <
     Press q inside the diff tab to close it manually.
+
+                                                            *:Claude-tutor*
+:Claude tutor [install|uninstall|close|status]
+    Tutor mode: Claude teaches you a feature instead of implementing it.
+
+    Shares one hook slot with |:Claude-preview| — installing either replaces
+    the other. The difference is what the hook does when Claude proposes an
+    edit:
+
+    preview     The hook BLOCKS until you decide. Claude sits frozen at the
+                permission request while the diff tab is open.
+
+    tutor       The hook answers "deny" immediately and hands the write to
+                Vim. Claude's turn ends, so the terminal stays usable — you
+                can ask questions while the patch sits open for editing.
+
+    install     Register the tutor hook in .claude/settings.local.json and
+                link the tutor skill into .claude/skills/. Also sends an
+                opening prompt to the Claude terminal.
+
+    uninstall   Remove the hooks and stop polling.
+
+    close       Close an open diff tab.
+
+    status      Show polling/diff status and dependency checks.
+
+    No argument defaults to "install".
+
+    Because Vim performs the write itself in this mode:
+
+    ga          Accept unmodified — Vim writes the file and tells Claude.
+    gm          Apply your edited version — Vim writes it, then sends Claude
+                a diff of your edits against its proposal. This is how you
+                reply: type questions or answers into the patch, then gm.
+    gr          Reject — Claude is told not to re-apply it.
+    q           Dismiss silently, telling Claude nothing.
+
+    The review UI opens in a new tab page; use |gt| / |gT| to move between it
+    and the terminal.
+
+    Edits applied this way are recorded under AI_POLICY/provenance/ with the
+    category "tutoring", distinguishing them from ordinary edits.
 
 ------------------------------------------------------------------------------
 5.8 Utility Commands                             *claude-code-utility-cmds*

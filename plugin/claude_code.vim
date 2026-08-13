@@ -44,7 +44,7 @@ function! s:complete(ArgLead, CmdLine, CursorPos) abort
         \ 'rename', 'optimize', 'debug', 'apply',
         \ 'chat', 'context', 'model',
         \ 'version', 'doctor',
-        \ 'preview', 'zoom',
+        \ 'preview', 'tutor', 'zoom',
         \ ]
   return filter(copy(l:subs), 'v:val =~# "^" . a:ArgLead')
 endfunction
@@ -107,6 +107,8 @@ function! s:dispatch(args) abort
     call claude_code#meta_commands#doctor()
   elseif l:sub ==# 'preview'
     call s:dispatch_preview(l:flags)
+  elseif l:sub ==# 'tutor'
+    call s:dispatch_tutor(l:flags)
   elseif l:sub ==# 'zoom'
     call claude_code#terminal#zoom()
   else
@@ -189,6 +191,30 @@ function! s:dispatch_preview(flags) abort
     call s:preview_status()
   else
     call claude_code#util#error('claude-code: unknown preview command "' . l:sub . '". Try: install, uninstall, close, status')
+  endif
+endfunction
+
+" ---------------------------------------------------------------------------
+" :Claude tutor — same review UI, but non-blocking, plus the tutor skill.
+" Mutually exclusive with :Claude preview (shares one hook slot).
+" ---------------------------------------------------------------------------
+
+function! s:dispatch_tutor(flags) abort
+  let l:sub = trim(a:flags)
+
+  if l:sub ==# 'install' || l:sub ==# ''
+    call claude_code#diff#install_hooks(1)
+    call claude_code#terminal_bridge#send(
+          \ 'Use the tutor skill. I want to learn before implementing. '
+          \ . 'What feature do you want to work through? — ask me.')
+  elseif l:sub ==# 'uninstall'
+    call claude_code#diff#uninstall_hooks()
+  elseif l:sub ==# 'close'
+    call claude_code#diff#close()
+  elseif l:sub ==# 'status'
+    call s:preview_status()
+  else
+    call claude_code#util#error('claude-code: unknown tutor command "' . l:sub . '". Try: install, uninstall, close, status')
   endif
 endfunction
 

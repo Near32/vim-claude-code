@@ -232,6 +232,29 @@ let g:claude_code_diff_match_repo_root = 1
 
 Requires `python3`. Uses Vim `+clientserver` for instant diffs when available, falls back to polling.
 
+## Learn Instead of Delegating — Tutor Mode
+
+```vim
+:Claude tutor install
+```
+
+Claude stops implementing and starts teaching. It lists the concepts a feature actually requires, you write questions into the patch, it answers them, sets exercises, marks your answers — and when you say you're ready, it hands back scaffolding with the gaps left for you to fill.
+
+The whole conversation happens **through the patch**. Claude proposes, you edit its proposal to reply, and your edits come back as a diff it reads. The tracking file lives at `AI_POLICY/tutoring/LEARNING.md` — one per repository, append-only, so the repo keeps a record of what was learned while working on it.
+
+**The terminal stays live.** Unlike diff preview, the tutor hook does not block: Claude's turn ends as soon as the patch opens, so you can ask follow-up questions or request hints while you work on it. The review UI opens in its own tab page — `gt` / `gT` to switch back and forth.
+
+| Command | Description |
+|---|---|
+| `:Claude tutor install` | Register the tutor hook and link the tutor skill |
+| `:Claude tutor uninstall` | Remove the hooks and stop polling |
+| `:Claude tutor close` | Manually close an open diff tab |
+| `:Claude tutor status` | Show status and dependency checks |
+
+> **Note:** tutor and preview share one hook slot — installing either replaces the other.
+
+In the diff tab, `gm` is the one to remember: it applies *your* edited version and sends Claude a diff of what you changed. That is how you ask questions and submit answers. `ga` accepts unmodified, `gr` rejects, `q` dismisses silently. Edits applied this way are recorded under `AI_POLICY/provenance/` with the category `tutoring`.
+
 ## Full-Screen Focus — Terminal Zoom
 
 ![zoom demo](assets/17-terminal-zoom.gif)
