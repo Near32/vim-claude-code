@@ -78,6 +78,13 @@ def vim_ancestor_pid():
             return pid
     return None
 
+def project_root(cwd):
+    try:
+        return subprocess.check_output(["git", "-C", cwd, "rev-parse", "--show-toplevel"],
+                stderr=subprocess.DEVNULL).decode().strip()
+    except Exception:
+        return cwd  # ponytail: not a git repo, treat cwd itself as the boundary
+
 def sweep_stale(max_age=3600):
     """Remove leftovers older than an hour.
 
@@ -125,6 +132,15 @@ def main():
     tool_input = data.get("tool_input", {})
     file_path = tool_input.get("file_path", "")
     if not file_path:
+        sys.exit(0)
+
+    # Never review: (a) anything outside the project entirely, (b) anything
+    # under a .scratch/ directory inside it -- the same "tooling state, not
+    # real content" convention as .git/.cache. Scratch dirs let subagents draft
+    # durable, resumable, git-visible state without triggering patch review.
+    abs_path = os.path.abspath(file_path)
+    root = project_root(cwd)
+    if not abs_path.startswith(root + os.sep) or "/.scratch/" in abs_path:
         sys.exit(0)
 
     os.makedirs(GLOBAL_DIR, exist_ok=True)

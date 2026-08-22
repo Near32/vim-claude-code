@@ -255,6 +255,23 @@ The whole conversation happens **through the patch**. Claude proposes, you edit 
 
 In the diff tab, `gm` is the one to remember: it applies *your* edited version and sends Claude a diff of what you changed. That is how you ask questions and submit answers. `ga` accepts unmodified, `gr` rejects, `q` dismisses silently. Edits applied this way are recorded under `AI_POLICY/provenance/` with the category `tutoring`.
 
+### v2 (default) — pre-generated curriculum
+
+`:Claude tutor install` links `skills/tutor-v2` by default. Instead of teaching one concept at a time as you go, v2 builds the whole curriculum for a feature up front, before you read a single line of it:
+
+1. **A workflow-shaped dependency graph** — a mermaid DAG whose nodes are things you can *do* ("push a repo public with CI wired up"), not bare topics, with prerequisite and enabling edges between them.
+2. **A probe** — `AskUserQuestion` calibrates you against the DAG (already-done / partial / not-started, plus today's bandwidth) before anything is written.
+3. **Parallel curriculum generation** — one subagent per DAG node drafts its teaching content, an exercise, and a cheatsheet, then a global critique and verification pass checks every exercise traces back to something actually taught (and vice versa) before any of it is shown to you.
+4. **Delivery** — the already-verified content lands as the same patch-review round trip described above, one node at a time.
+
+The design is inspired by [Eero Alvar's "How I Use AI to Learn Things"](https://youtu.be/kzcI5F4tGiU) and its reference implementation, [Alvarmethod](https://github.com/vasanthsreeram/Alvarmethod) — this README only summarizes the mechanics that actually ship here; see `skills/tutor-v2/SKILL.md` in this repo for the full, authoritative workflow (phases, file layout, the `.scratch/` drafting mechanism, and the rules an agent follows).
+
+**Falling back to v1** — the original, reactive, single-file teaching loop is still fully present and selectable:
+```vim
+let g:claude_code_tutor_version = 'v1'
+```
+Set this before `:Claude tutor install` (or `:Claude tutor uninstall` then reinstall if tutor mode is already active) to link the original `skills/tutor` skill instead.
+
 ## Full-Screen Focus — Terminal Zoom
 
 ![zoom demo](assets/17-terminal-zoom.gif)
@@ -359,6 +376,7 @@ let g:claude_code_float_border = 'double'
 | `g:claude_code_debug` | `0` | Enable debug logging to message area |
 | `g:claude_code_diff_preview` | `0` | Auto-start diff preview polling on Vim startup |
 | `g:claude_code_diff_match_repo_root` | `0` | Restrict this Vim to triggers under its own repo/cwd (for running several Vims at once) |
+| `g:claude_code_tutor_version` | `'v2'` | Which tutor skill `:Claude tutor install` links — `'v2'` (pre-generated curriculum, default) or `'v1'` (original reactive teaching loop) |
 | `g:claude_code_bracketed_paste` | `1` | Enable bracketed paste mode support |
 | `g:claude_code_terminal_start_delay` | `300` | Delay (ms) before attaching to Claude terminal |
 

@@ -697,18 +697,24 @@ function! claude_code#diff#install_hooks(...) abort
   call mkdir(l:settings_dir, 'p')
   call writefile([json_encode(l:data)], l:settings_path)
 
-  " Tutor mode also needs the skill visible to Claude in this project
+  " Tutor mode also needs the skill visible to Claude in this project.
+  " g:claude_code_tutor_version selects which plugin-side skill dir is
+  " linked ('v1' -> the original 'tutor'; anything else, including the
+  " default, -> 'tutor-v2'); the project-side link name stays 'tutor'
+  " either way so the skill name Claude resolves is unaffected.
+  let l:version = claude_code#config#get('tutor_version')
   if l:tutor
+    let l:skill_src = (l:version ==# 'v1') ? 'tutor' : 'tutor-v2'
     call mkdir(l:settings_dir . '/skills', 'p')
     call delete(l:settings_dir . '/skills/tutor', 'rf')
-    call system('ln -sfn ' . shellescape(s:plugin_root . '/skills/tutor')
+    call system('ln -sfn ' . shellescape(s:plugin_root . '/skills/' . l:skill_src)
           \ . ' ' . shellescape(l:settings_dir . '/skills/tutor'))
   endif
 
   " Start polling
   call claude_code#diff#start_polling()
 
-  echomsg 'claude-code: ' . (l:tutor ? 'tutor' : 'diff preview')
+  echomsg 'claude-code: ' . (l:tutor ? 'tutor (' . l:version . ')' : 'diff preview')
         \ . ' hooks installed -> ' . l:settings_path
 endfunction
 
