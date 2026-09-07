@@ -46,6 +46,17 @@ function! claude_code#diff#start_polling() abort
   let s:trigger_dir = expand('~/.claude/vim-diff')
   call mkdir(s:trigger_dir, 'p')
   let s:poll_timer = timer_start(1000, function('s:check_trigger'), {'repeat': -1})
+  " Belt-and-braces: show()'s tabnew can be silently blocked when the timer
+  " fires while focus is in Terminal-Job mode (window-layout changes are
+  " unsafe there), so the passive interval timer alone can miss a trigger
+  " during an active Claude session. TermLeave doesn't exist in Vim (it's a
+  " Neovim-only event) -- ModeChanged with pattern 't:*' (mode() == 't' for
+  " Terminal-Job mode) is the portable equivalent: re-check the instant Vim
+  " leaves Terminal-Job mode, instead of waiting on the next lucky tick.
+  augroup ClaudeCodeDiffPoll
+    autocmd!
+    autocmd ModeChanged t:* call s:check_trigger(0)
+  augroup END
   call claude_code#util#debug('diff: polling started (' . s:trigger_dir . ')')
 endfunction
 
@@ -53,6 +64,9 @@ function! claude_code#diff#stop_polling() abort
   if s:poll_timer >= 0
     call timer_stop(s:poll_timer)
     let s:poll_timer = -1
+    augroup ClaudeCodeDiffPoll
+      autocmd!
+    augroup END
     call claude_code#util#debug('diff: polling stopped')
   endif
 endfunction
@@ -699,12 +713,14 @@ function! claude_code#diff#install_hooks(...) abort
 
   " Tutor mode also needs the skill visible to Claude in this project.
   " g:claude_code_tutor_version selects which plugin-side skill dir is
-  " linked ('v1' -> the original 'tutor'; anything else, including the
-  " default, -> 'tutor-v2'); the project-side link name stays 'tutor'
-  " either way so the skill name Claude resolves is unaffected.
+  " linked -- 'v1' -> the original 'tutor', 'v2' -> 'tutor-v2', 'v3' (the
+  " default, and the fallback for any unrecognized value) -> 'tutor-v3';
+  " the project-side link name stays 'tutor' either way so the skill name
+  " Claude resolves is unaffected by version.
   let l:version = claude_code#config#get('tutor_version')
+  let l:version_dirs = {'v1': 'tutor', 'v2': 'tutor-v2', 'v3': 'tutor-v3'}
   if l:tutor
-    let l:skill_src = (l:version ==# 'v1') ? 'tutor' : 'tutor-v2'
+    let l:skill_src = get(l:version_dirs, l:version, 'tutor-v3')
     call mkdir(l:settings_dir . '/skills', 'p')
     call delete(l:settings_dir . '/skills/tutor', 'rf')
     call system('ln -sfn ' . shellescape(s:plugin_root . '/skills/' . l:skill_src)

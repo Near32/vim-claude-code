@@ -147,6 +147,16 @@ its node and writes three drafts to the scratchpad: the teaching content
 (workflow context, then the concepts it requires), a first-draft exercise,
 and the cheatsheet.
 
+**Exercise style: motive → application, open-book, not fact-retrieval.**
+Assume the learner can look anything up — a cheatsheet sits right next to
+every exercise for exactly that reason. An exercise that asks "what
+happens when you remove X" or "what does Y do" is testing recall of a
+specific behavior, not understanding; skip that shape. Instead test
+whether the learner can reason from a node's stated motive to a concrete
+consequence: given what this thing is *for*, what does it imply here, what
+breaks, what's the right call and why. If an exercise's honest answer is a
+single memorized fact, rewrite it to ask what that fact *implies* instead.
+
 **critiqueGlobally** — one pass, not per-node, reading every draft together.
 Look for: duplication across nodes, inconsistent terminology, an exercise on
 one node quietly assuming something from a node it has no DAG edge to,
@@ -199,6 +209,19 @@ to write. Only send a feedback patch when there's something to actually add:
 a wrong answer, a partially-right one, a misconception worth naming, or a
 genuine gap the answer surfaces. Confirming a correct answer is noise, not
 teaching — resist the urge to write "Correct." as its own patch.
+
+**Post-delivery corrections: real-world testing outranks verifyGlobally.**
+Phase 3's critique/verify pass catches internal inconsistency, but it can't
+catch a gap that only shows up when the taught thing is actually *done* —
+e.g. a workflow that was taught as correct fails when actually run, because
+a real prerequisite (a required init step, a missing credential, an
+undocumented flag) wasn't part of the curriculum's own knowledge. When the
+learner hits this while doing `ship-and-verify` (or any node whose payoff is
+a real external action), the fix is the same shape as a Phase 3 loop
+iteration, just triggered by reality instead of critique: patch the specific
+node(s) that taught the incomplete picture — not just the delivered
+artifact — so the curriculum and the shipped thing agree, and so a future
+learner going through the same DAG doesn't hit the same gap uncorrected.
 
 ## The write protocol (unchanged mechanism from v1)
 
