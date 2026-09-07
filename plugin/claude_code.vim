@@ -204,9 +204,12 @@ function! s:dispatch_tutor(flags) abort
 
   if l:sub ==# 'install' || l:sub ==# ''
     call claude_code#diff#install_hooks(1)
+    " auto_open = 0: installing the hooks must not spawn a Claude terminal.
+    " The user may already have a session running outside Vim; if they do want
+    " one here, <C-\> opens it.
     call claude_code#terminal_bridge#send(
           \ 'Use the tutor skill. I want to learn before implementing. '
-          \ . 'What feature do you want to work through? — ask me.')
+          \ . 'What feature do you want to work through? — ask me.', 0)
   elseif l:sub ==# 'uninstall'
     call claude_code#diff#uninstall_hooks()
   elseif l:sub ==# 'close'

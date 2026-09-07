@@ -43,12 +43,24 @@ function! claude_code#terminal_bridge#get_buf() abort
 endfunction
 
 " ─────────────────────────────────────────────────────────────────────────────
-" claude_code#terminal_bridge#send(prompt)
+" claude_code#terminal_bridge#send(prompt [, auto_open])
 " Sends a prompt to the active Claude terminal.
-" Opens one via the base plugin's toggle if none exists yet.
+" Opens one via the base plugin's toggle if none exists yet, unless auto_open
+" is 0. With auto_open 0 the prompt is skipped and the user is told how to open
+" a terminal themselves. Used by commands that only configure state (e.g.
+" :Claude tutor install) and should not force a session into existence — the
+" user may already be running Claude Code outside Vim.
 " ─────────────────────────────────────────────────────────────────────────────
-function! claude_code#terminal_bridge#send(prompt) abort
+function! claude_code#terminal_bridge#send(prompt, ...) abort
+  let l:auto_open = a:0 ? a:1 : 1
   let l:bnr = claude_code#terminal_bridge#get_buf()
+
+  if l:bnr < 0 && !l:auto_open
+    let l:toggle = claude_code#config#get('map_toggle')
+    echomsg 'claude-code: no Claude terminal in this Vim; prompt not sent. Press '
+          \ . (empty(l:toggle) ? '<C-\>' : l:toggle) . ' to open one.'
+    return
+  endif
 
   if l:bnr < 0
     " Open a terminal via the base plugin (toggle with no variant).
